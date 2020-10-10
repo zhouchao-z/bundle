@@ -3,10 +3,12 @@ const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
 const path = require('path');
 const babel = require('@babel/core');
+
+//入口文件的分析。
 const moduleAnalyser = (filename) => {
   const content = fs.readFileSync(filename, 'utf-8');
   
-  const ast = parser.parse(content, {
+  const ast = parser.parse(content, { 
     sourceType: 'module',
   })
   // 通过traverse遍历body，找到type为ImportDeclaration的节点。
@@ -32,5 +34,49 @@ const moduleAnalyser = (filename) => {
   }
 }
 
-const moduleInfo = moduleAnalyser('./src/index.js');
-console.log(moduleInfo);
+// 依赖图谱，包含所有的依赖关系。
+const dependenciesGraph = (filename) => {
+  const entryModule = moduleAnalyser(filename);
+  const graphArr = [entryModule];
+
+  for(let i = 0; i < graphArr.length; i++) {
+    const item = graphArr[i];
+    const { dependencies } = item;
+    if(dependencies) {
+      for(let i in dependencies) {
+        graphArr.push(moduleAnalyser(dependencies[i]))
+      }
+    }
+  }
+  const graph = {};
+  graphArr.forEach(item => {
+    graph[item.filename] = {
+      dependencies: item.dependencies,
+      code: item.code
+    }
+  }) 
+  return graph;
+}
+
+
+// 递归执行依赖图谱里面的code。  
+const generateCode = (entry) => {
+  // dependenciesGraph 是生成图谱的函数。
+  const graph = JSON.stringify(dependenciesGraph(entry));
+  eval(`
+    (function(graph) {
+      function require(module) {
+        function localRequire(relativePath) {
+          return require(graph[module].dependencies[relativePath])
+        }
+        let exports = {};
+        (function(require, exports, code) {
+          eval(code)
+        })(localRequire, exports, graph[module].code)
+        return exports;
+      }
+      require('${entry}')
+    })(${graph})
+  `)
+}
+const code = generateCode('./src/index.js');
